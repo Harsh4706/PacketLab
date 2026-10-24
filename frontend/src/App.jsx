@@ -1,0 +1,130 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Activity, ArrowRight, BarChart3, BookOpen, Check, ChevronDown, CircleHelp, Clock3, Code2, Copy, Database, GitCompare, Inbox, LayoutDashboard, Menu, MessageSquare, Network, PanelLeft, RefreshCw, Search, Send, Server, Settings2, ShieldCheck, Sparkles, Trash2, X, Zap } from 'lucide-react'
+import { api } from './api'
+import './App.css'
+
+const navItems = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'messages', label: 'Message lab', icon: MessageSquare },
+  { id: 'compare', label: 'Compare', icon: GitCompare },
+  { id: 'history', label: 'History', icon: Clock3 },
+  { id: 'protocols', label: 'Protocol explorer', icon: Network },
+]
+
+function formatTime(value) {
+  if (!value) return '—'
+  return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+}
+function formatDate(value) {
+  if (!value) return '—'
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+}
+function safeJson(value) {
+  try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
+}
+
+function App() {
+  const [page, setPage] = useState('overview')
+  const [mobileNav, setMobileNav] = useState(false)
+  const [health, setHealth] = useState({ state: 'checking', latency: null })
+  const [history, setHistory] = useState([])
+  const [selected, setSelected] = useState(null)
+  const [toast, setToast] = useState(null)
+
+  const notify = useCallback((message, kind = 'info') => {
+    setToast({ message, kind })
+    window.setTimeout(() => setToast(null), 3500)
+  }, [])
+  const checkHealth = useCallback(async () => {
+    const start = performance.now()
+    try {
+      await api.health()
+      setHealth({ state: 'online', latency: Math.round(performance.now() - start) })
+    } catch { setHealth({ state: 'offline', latency: null }) }
+  }, [])
+  useEffect(() => { checkHealth(); const interval = setInterval(checkHealth, 30000); return () => clearInterval(interval) }, [checkHealth])
+  const navigate = (id) => { setPage(id); setMobileNav(false) }
+  const addHistory = (item) => setHistory((current) => [item, ...current])
+  const openDetail = (item) => setSelected(item)
+  return (
+    <div className="app-shell">
+      <header className="mobile-topbar">
+        <button className="icon-button" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={20} /></button>
+        <Logo compact />
+        <HealthBadge health={health} />
+      </header>
+      <aside className={`sidebar ${mobileNav ? 'is-open' : ''}`}>
+        <div className="brand"><Logo /><button className="icon-button mobile-close" onClick={() => setMobileNav(false)}><X size={18} /></button></div>
+        <div className="workspace-switcher"><div className="workspace-avatar">P</div><div><strong>PacketLab</strong><span>Personal workspace</span></div><ChevronDown size={15} /></div>
+        <nav className="main-nav" aria-label="Main navigation">
+          <div className="nav-label">Workspace</div>
+          {navItems.map(({ id, label, icon: Icon }) => <button key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => navigate(id)}><Icon size={17} /><span>{label}</span>{id === 'messages' && <kbd>⌘K</kbd>}</button>)}
+        </nav>
+        <div className="sidebar-bottom"><div className="nav-label">System</div><button className="nav-item"><Settings2 size={17} /><span>Settings</span></button><button className="nav-item"><CircleHelp size={17} /><span>Docs & support</span></button><div className="user-card"><div className="user-avatar">Y</div><div><strong>Yash</strong><span>Free plan</span></div><MoreDots /></div></div>
+      </aside>
+      {mobileNav && <div className="scrim" onClick={() => setMobileNav(false)} />}
+      <main className="main-content">
+        <div className="page-container">
+          <div className="topline"><div className="breadcrumbs"><span>Workspace</span><ArrowRight size={13} /><strong>{navItems.find((item) => item.id === page)?.label}</strong></div><HealthBadge health={health} /></div>
+          {page === 'overview' && <Overview history={history} health={health} navigate={navigate} checkHealth={checkHealth} />}
+          {page === 'messages' && <MessageLab onSend={(item) => { addHistory(item); notify('Message captured in history', 'success') }} notify={notify} />}
+          {page === 'compare' && <Compare notify={notify} onRecord={(items) => setHistory((current) => [...items, ...current].slice(0, 20))} />}
+          {page === 'history' && <History records={history} onSelect={openDetail} onClear={() => { setHistory([]); notify('Local history cleared', 'success') }} />}
+          {page === 'protocols' && <Protocols notify={notify} />}
+        </div>
+      </main>
+      {selected && <DetailDrawer item={selected} onClose={() => setSelected(null)} />}
+      {toast && <div className={`toast ${toast.kind}`}><span className="toast-dot" />{toast.message}</div>}
+    </div>
+  )
+}
+
+function Logo({ compact = false }) { return <div className={`logo ${compact ? 'compact' : ''}`}><span className="logo-mark"><span /><span /><span /></span>{!compact && <span>Packet<span className="logo-accent">Lab</span></span>}</div> }
+function MoreDots() { return <span className="more-dots"><i /><i /><i /></span> }
+function HealthBadge({ health }) { return <div className={`health-badge ${health.state}`}><span className="health-pulse" />{health.state === 'checking' ? 'Checking API…' : health.state === 'online' ? `API healthy${health.latency ? ` · ${health.latency}ms` : ''}` : 'API unavailable'}</div> }
+function PageHeader({ eyebrow, title, description, action }) { return <div className="page-header"><div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1><p>{description}</p></div>{action}</div> }
+function Button({ children, variant = 'primary', icon: Icon, ...props }) { return <button className={`button ${variant}`} {...props}>{Icon && <Icon size={16} />}{children}</button> }
+function StatCard({ label, value, detail, icon: Icon, tone = 'blue' }) { return <div className="stat-card"><div className={`stat-icon ${tone}`}><Icon size={18} /></div><div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div></div> }
+
+function Overview({ history, health, navigate, checkHealth }) {
+  const successful = history.filter((record) => record.success).length
+  return <><PageHeader eyebrow="Good evening, Yash" title="Your network, in focus." description="Send, inspect, and compare TCP and UDP packets from one calm workspace." action={<Button icon={Send} onClick={() => navigate('messages')}>New packet</Button>} /><section className="stats-grid"><StatCard label="API status" value={health.state === 'online' ? 'Operational' : health.state === 'checking' ? 'Checking…' : 'Offline'} detail={health.latency ? `${health.latency}ms response` : 'Last checked just now'} icon={Activity} tone={health.state === 'online' ? 'green' : 'orange'} /><StatCard label="Packets captured" value={history.length} detail="During this session" icon={Inbox} tone="purple" /><StatCard label="Success rate" value={`${history.length ? Math.round((successful / history.length) * 100) : 0}%`} detail="From sent packets" icon={ShieldCheck} tone="green" /><StatCard label="Transports ready" value="2" detail="TCP and UDP" icon={Network} tone="blue" /></section><div className="overview-grid"><section className="panel activity-panel"><div className="panel-heading"><div><h2>Recent activity</h2><p>Your latest transport requests</p></div><button className="text-button" onClick={() => navigate('history')}>View all <ArrowRight size={14} /></button></div>{history.slice(0, 4).map((item) => <ActivityRow key={item.id} item={item} />)}</section><section className="panel quick-panel"><div className="panel-heading"><div><h2>Start exploring</h2><p>Jump into a focused workflow</p></div><Sparkles size={18} className="muted" /></div><QuickAction icon={Send} title="Send a packet" text="Exercise TCP or UDP" onClick={() => navigate('messages')} /><QuickAction icon={GitCompare} title="Compare transports" text="Send the same value twice" onClick={() => navigate('compare')} /><QuickAction icon={BookOpen} title="Explore transports" text="Learn TCP and UDP" onClick={() => navigate('protocols')} /></section></div><section className="panel timeline-panel"><div className="panel-heading"><div><h2>Packet timeline</h2><p>Recent packets sent from this session</p></div><Button variant="ghost" icon={RefreshCw} onClick={checkHealth}>Refresh</Button></div><Timeline records={history.slice(0, 6)} /></section></>
+}
+function ActivityRow({ item }) { return <div className="activity-row"><div className="activity-type"><span className={`method-dot ${String(item.protocol || 'tcp').toLowerCase()}`}><ProtocolIcon protocol={item.protocol} /></span><div><strong>{String(item.protocol || '').toUpperCase()} <span className="route">{String(item.message || '').slice(0, 36)}</span></strong><small>{String(item.protocol || 'tcp').toUpperCase()} · {formatDate(item.timestamp || item.created_at)}</small></div></div><div className="activity-result"><span className={`status ${item.success ? 'success' : 'error'}`}>{item.success ? 'OK' : 'Failed'}</span><small>{item.latency_ms != null ? `${item.latency_ms}ms` : '—'}</small></div></div> }
+function QuickAction({ icon: Icon, title, text, onClick }) { return <button className="quick-action" onClick={onClick}><span className="quick-icon"><Icon size={17} /></span><span><strong>{title}</strong><small>{text}</small></span><ArrowRight size={15} /></button> }
+function Timeline({ records }) { if (!records.length) return <EmptyState title="No traffic yet" text="Send a message to start seeing request timing here." />; return <div className="timeline">{records.map((item, index) => <div className="timeline-item" key={item.id}><span className={`timeline-node ${item.success ? 'success' : 'error'}`} /><div className="timeline-label"><strong>{String(item.protocol).toUpperCase()}</strong><small>{formatTime(item.timestamp)}</small></div><div className="timeline-track"><span style={{ width: `${Math.min(96, Math.max(8, Number(item.latency_ms || 30) / 2))}%` }} /></div><span className="timeline-ms">{item.latency_ms != null ? item.latency_ms : '—'}ms</span>{index < records.length - 1 && <i className="timeline-line" />}</div>)}</div> }
+
+function MessageLab({ onSend, notify }) {
+  const [form, setForm] = useState({ protocol: 'tcp', message: '{"hello":"packetlab"}', timeout: 2 });
+  const [result, setResult] = useState(null); const [loading, setLoading] = useState(false)
+  const send = async () => { setLoading(true); setResult(null); try {
+    const data = await api.sendMessage({ protocol: form.protocol, message: form.message, timeout: Number(form.timeout) });
+    const result = data.result;
+    const item = { id: `${Date.now()}`, ...result, message: form.message };
+    setResult(item); onSend(item); notify(`${form.protocol.toUpperCase()} response received`, 'success')
+  } catch (error) { onSend({ id: `${Date.now()}`, protocol: form.protocol, message: form.message, response: null, success: false, error: error.message, timestamp: new Date().toISOString() }); notify(error.message, 'error') } finally { setLoading(false) } }
+  return <><PageHeader eyebrow="Transport lab" title="Send a message." description="Exercise the PacketLab TCP and UDP transports and inspect the echoed response." /><div className="lab-layout"><section className="panel composer"><div className="panel-heading"><div><h2>Message</h2><p>Requests are sent to the configured backend transport server.</p></div></div><label>Protocol<select value={form.protocol} onChange={(e) => setForm((f) => ({ ...f, protocol: e.target.value }))}><option value="tcp">TCP</option><option value="udp">UDP</option></select></label><label>Message <span className="optional">UTF-8 text</span><textarea value={form.message} onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))} rows="8" spellCheck="false" /></label><label>Timeout <span className="optional">0.05-5 seconds</span><input type="number" min="0.05" max="5" step="0.05" value={form.timeout} onChange={(e) => setForm((f) => ({ ...f, timeout: e.target.value }))} /></label><div className="composer-footer"><span className="muted tiny"><Zap size={13} /> Backend-enforced timeout</span><Button icon={Send} onClick={send} disabled={loading}>{loading ? 'Sending...' : 'Send message'}</Button></div></section><section className="panel response-panel"><div className="panel-heading"><div><h2>Response</h2><p>{result ? 'Response returned by the transport server' : 'Send a message to inspect its response'}</p></div>{result && <span className={`status ${result.success ? 'success' : 'error'}`}>{result.success ? 'OK' : 'Failed'}</span>}</div>{result ? <><div className="response-meta"><span><Network size={14} /> {result.protocol.toUpperCase()}</span><span><Database size={14} /> Echo response</span></div><pre className="code-block"><code>{safeJson(JSON.stringify(result.response))}</code></pre><div className="packet-summary"><div><span>Protocol</span><strong>{result.protocol.toUpperCase()}</strong></div><div><span>Request</span><strong>{result.message}</strong></div><div><span>Round trip</span><strong>{result.latency_ms != null ? `${result.latency_ms} ms` : 'Unavailable'}</strong></div></div></> : <EmptyState icon={Inbox} title="Nothing to inspect yet" text="Send a TCP or UDP message to see the backend response." />}</section></div></>
+}
+function Compare({ notify, onRecord }) {
+  const [message, setMessage] = useState('Hello from PacketLab'); const [timeout, setTimeoutValue] = useState(2); const [result, setResult] = useState(null); const [loading, setLoading] = useState(false)
+  const runCompare = async () => { setLoading(true); setResult(null); try { const data = await api.compare({ message, timeout: Number(timeout) }); setResult(data); onRecord(Object.entries(data.results || {}).map(([protocol, item]) => ({ id: `${Date.now()}-${protocol}`, protocol, message, ...(item.ok ? item.result : { success: false, error: item.error }), timestamp: item.result?.timestamp || new Date().toISOString() }))) } catch (error) { notify(error.message, 'error') } finally { setLoading(false) } }
+  return <><PageHeader eyebrow="Compare transports" title="TCP vs UDP." description="Send the same text through both PacketLab transports and compare the actual measurements." /><section className="panel compare-panel"><label className="editor"><div><span className="editor-dot purple" />Message <span className="optional">UTF-8 text</span></div><textarea value={message} onChange={(e) => setMessage(e.target.value)} spellCheck="false" rows="9" /></label><label className="compare-timeout">Timeout <input type="number" min="0.05" max="5" step="0.05" value={timeout} onChange={(e) => setTimeoutValue(e.target.value)} /> seconds</label><div className="compare-action"><span className="muted tiny"><GitCompare size={13} /> One request per transport</span><Button icon={GitCompare} onClick={runCompare} disabled={loading}>{loading ? 'Comparing...' : 'Compare transports'}</Button></div>{result && <div className="diff-result"><div className="panel-heading"><div><h2>Comparison result</h2><p>{result.ok ? 'Both transports returned successfully.' : 'One or more transports failed.'}</p></div></div>{Object.entries(result.results || {}).map(([protocol, item]) => <div className="diff-row" key={protocol}><code>{protocol.toUpperCase()}</code><span className={`diff-value ${item.ok ? 'added' : 'removed'}`}>{item.ok ? `${item.result.latency_ms} ms · ${item.result.bytes_sent} sent / ${item.result.bytes_received} received` : item.error}</span></div>)}</div>}</section></>
+}
+function Editor({ label, value, onChange, accent }) { return <label className="editor"><div><span className={`editor-dot ${accent}`} />{label}<span className="optional">JSON</span></div><textarea value={value} onChange={(e) => onChange(e.target.value)} spellCheck="false" rows="14" /></label> }
+
+function History({ records, onSelect, onClear }) {
+  const [query, setQuery] = useState(''); const [protocol, setProtocol] = useState('All transports'); const [confirm, setConfirm] = useState(false)
+  const filtered = records.filter((item) => `${item.message} ${item.protocol} ${item.response} ${item.error}`.toLowerCase().includes(query.toLowerCase()) && (protocol === 'All transports' || String(item.protocol).toUpperCase() === protocol))
+  return <><PageHeader eyebrow="History" title="Every packet, accounted for." description="Search and revisit TCP and UDP attempts from this session." action={<Button variant="ghost" icon={Trash2} onClick={() => setConfirm(true)} disabled={!records.length}>Clear history</Button>} /><section className="panel history-panel"><div className="filters"><div className="search-field"><Search size={16} /><input placeholder="Search messages…" value={query} onChange={(e) => setQuery(e.target.value)} /></div><select value={protocol} onChange={(e) => setProtocol(e.target.value)}><option>All transports</option><option>TCP</option><option>UDP</option></select><span className="filter-count">{filtered.length} {filtered.length === 1 ? 'attempt' : 'attempts'}</span></div>{filtered.length ? <div className="history-table"><div className="table-head"><span>Message</span><span>Transport</span><span>Status</span><span>Time</span><span /></div>{filtered.map((item) => <button className="table-row" key={item.id} onClick={() => onSelect(item)}><span className="table-message"><span className={`method-pill ${String(item.protocol).toLowerCase()}`}>SEND</span><strong>{String(item.message || '').slice(0, 42)}</strong></span><span className="protocol-cell"><ProtocolIcon protocol={item.protocol} />{String(item.protocol || '').toUpperCase()}</span><span><span className={`status ${item.success ? 'success' : 'error'}`}>{item.success ? 'OK' : 'Failed'}</span></span><span className="muted">{formatDate(item.timestamp)}</span><ArrowRight size={15} className="muted" /></button>)}</div> : <EmptyState icon={Search} title="No packets found" text={records.length ? 'Try a different search or transport filter.' : 'Packets you send will show up here.'} />}</section>{confirm && <ConfirmDialog onCancel={() => setConfirm(false)} onConfirm={() => { setConfirm(false); onClear() }} />}</>
+}
+function ConfirmDialog({ onCancel, onConfirm }) { return <div className="modal-backdrop"><div className="confirm-dialog"><div className="danger-icon"><Trash2 size={20} /></div><h2>Clear all history?</h2><p>This removes every captured message from this workspace. This action cannot be undone.</p><div><Button variant="ghost" onClick={onCancel}>Cancel</Button><Button variant="danger" onClick={onConfirm}>Clear history</Button></div></div></div> }
+
+function Protocols() {
+  const protocols = [{ name: 'TCP', color: 'purple', description: 'Reliable, ordered, connection-oriented delivery. PacketLab frames JSON values over a TCP socket.', facts: ['Three-way handshake before data transfer', 'Reliable delivery with ordering and acknowledgements', 'PacketLab default endpoint: TCP port 9001'] }, { name: 'UDP', color: 'orange', description: 'Fast, connectionless datagrams. PacketLab sends one JSON value to the UDP socket and returns the server response.', facts: ['No handshake or delivery guarantee', 'Low overhead and latency', 'PacketLab default endpoint: UDP port 9002'] }]
+  const [active, setActive] = useState(protocols[0]); return <><PageHeader eyebrow="Protocol explorer" title="PacketLab transports." description="Learn the two socket protocols exercised by this workspace." /><div className="protocol-layout"><section className="protocol-list">{protocols.map((protocol) => <button key={protocol.name} className={`protocol-card ${active.name === protocol.name ? 'active' : ''}`} onClick={() => setActive(protocol)}><span className={`protocol-symbol ${protocol.color}`}><ProtocolIcon protocol={protocol.name} /></span><span><strong>{protocol.name}</strong><small>Transport layer</small></span><ArrowRight size={15} /></button>)}</section><section className="panel protocol-detail"><div className="detail-hero"><span className={`protocol-symbol large ${active.color}`}><ProtocolIcon protocol={active.name} /></span><div><span className="eyebrow">Transport layer</span><h2>{active.name}</h2><p>{active.description}</p></div></div><div className="facts"><h3>What to remember</h3>{active.facts.map((fact) => <div key={fact}><Check size={15} /><span>{fact}</span></div>)}</div></section></div></>
+}
+function ProtocolIcon({ protocol = '' }) { const p = protocol.toLowerCase(); return p === 'http' ? <Code2 size={16} /> : p === 'dns' ? <Search size={16} /> : p === 'tcp' ? <Network size={16} /> : p === 'udp' ? <Zap size={16} /> : p === 'icmp' ? <Activity size={16} /> : <MessageSquare size={16} /> }
+function EmptyState({ icon: Icon = Inbox, title, text }) { return <div className="empty-state"><span className="empty-icon"><Icon size={21} /></span><h3>{title}</h3><p>{text}</p></div> }
+function DetailDrawer({ item, onClose }) { return <div className="drawer-backdrop" onClick={onClose}><aside className="detail-drawer" onClick={(e) => e.stopPropagation()}><div className="drawer-header"><div><span className="eyebrow">Message detail</span><h2>{String(item.protocol || 'Transport').toUpperCase()} <span>{item.success ? 'OK' : 'Failed'}</span></h2></div><button className="icon-button" onClick={onClose} aria-label="Close details"><X size={18} /></button></div><div className="drawer-meta"><div><span>Protocol</span><strong>{String(item.protocol || '').toUpperCase()}</strong></div><div><span>Round trip</span><strong>{item.latency_ms != null ? `${item.latency_ms}ms` : '—'}</strong></div><div><span>Sent</span><strong>{item.bytes_sent ?? '—'} bytes</strong></div><div><span>Received</span><strong>{item.bytes_received ?? '—'} bytes</strong></div><div><span>Captured</span><strong>{formatDate(item.timestamp)}</strong></div></div><h3>Message</h3><pre className="code-block"><code>{item.message || 'No message'}</code></pre><h3>Response</h3><pre className="code-block"><code>{item.response || item.error || 'No response body'}</code></pre></aside></div> }
+
+export default App
