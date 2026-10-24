@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import socket
+import ipaddress
 from typing import Any
 
 from flask import Flask, jsonify, request
@@ -11,6 +12,7 @@ from flask_cors import CORS
 from .socket_client import send_tcp, send_udp
 from .tcp_server import TCPServer
 from .udp_server import UDPServer
+from .remote_lab import RemoteLab
 
 MAX_MESSAGE_LENGTH = 4096
 MAX_TIMEOUT = 5.0
@@ -31,6 +33,34 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
     origins = os.getenv("PACKETLAB_FRONTEND_ORIGIN", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,http://127.0.0.1:3000").split(",")
     CORS(app, resources={r"/api/*": {"origins": [o.strip() for o in origins]}})
     app.extensions["packetlab_servers"] = ()
+    app.extensions["remote_lab"] = RemoteLab()
+
+    def _remote_host(value: Any) -> str:
+        if not isinstance(value, str) or len(value) > 64:
+            raise ValueError("server host must be a private LAN IPv4 address")
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError as exc:
+            raise ValueError("server host must be a private LAN IPv4 address") from exc
+        if address.version != 4 or not (address.is_private or address.is_loopback):
+            raise ValueError("server host must be a private LAN IPv4 address")
+        return value
+
+    def _remote_port(value: Any, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or not 1024 <= value <= 65535:
+            raise ValueError(f"{field} must be between 1024 and 65535")
+        return value
+
+    def _local_ip() -> str:
+        try:
+            addresses = socket.gethostbyname_ex(socket.gethostname())[2]
+            for address in addresses:
+                parsed = ipaddress.ip_address(address)
+                if parsed.version == 4 and parsed.is_private and not parsed.is_loopback:
+                    return address
+        except OSError:
+            pass
+        return "127.0.0.1"
 
     @app.get("/api/health")
     @app.get("/health")
@@ -91,6 +121,85 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
             except (OSError, TimeoutError, ValueError, socket.timeout) as exc:
                 results[protocol] = {"ok": False, "error": str(exc) or "transport failure"}
         return jsonify({"ok": all(item["ok"] for item in results.values()), "request": message, "results": results})
+
+    @app.get("/api/remote/status")
+    def remote_status():
+        return jsonify({"ok": True, "local_ip": _local_ip(), **app.extensions["remote_lab"].status()})
+
+    @app.post("/api/remote/server/start")
+    def remote_server_start():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
+        protocols = body.get("protocols", ["tcp", "udp"])
+        if not isinstance(protocols, list) or not protocols or any(item not in ("tcp", "udp") for item in protocols):
+            return jsonify({"ok": False, "error": "protocols must contain tcp, udp, or both"}), 400
+        try:
+            tcp_port = _remote_port(body.get("tcp_port", 9101), "tcp_port")
+            udp_port = _remote_port(body.get("udp_port", 9102), "udp_port")
+            welcome = body.get("welcome", "Welcome to PacketLab")
+            if not isinstance(welcome, str) or not welcome.strip() or len(welcome.encode("utf-8")) > MAX_MESSAGE_LENGTH:
+                raise ValueError("welcome must be a non-empty message up to 4096 bytes")
+            result = app.extensions["remote_lab"].start(protocols, tcp_port, udp_port, welcome)
+            return jsonify({"ok": True, **result})
+        except (OSError, ValueError) as exc:
+            return jsonify({"ok": False, "error": str(exc) or "unable to start remote server"}), 400
+
+    @app.post("/api/remote/server/stop")
+    def remote_server_stop():
+        app.extensions["remote_lab"].stop()
+        return jsonify({"ok": True, **app.extensions["remote_lab"].status()})
+
+    @app.post("/api/remote/client/send")
+    def remote_client_send():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
+        protocol = str(body.get("protocol", "")).lower()
+        message = body.get("message")
+        try:
+            host = _remote_host(body.get("host"))
+            port = _remote_port(body.get("port"), "port")
+            timeout = body.get("timeout", 3.0)
+            if protocol not in ("tcp", "udp"):
+                raise ValueError("protocol must be tcp or udp")
+            if not isinstance(message, str) or not message.strip():
+                raise ValueError("message must be a non-empty string")
+            if len(message.encode("utf-8")) > MAX_MESSAGE_LENGTH:
+                raise ValueError("message is too long")
+            if not isinstance(timeout, (int, float)) or not 0.05 <= timeout <= MAX_TIMEOUT:
+                raise ValueError(f"timeout must be between 0.05 and {MAX_TIMEOUT} seconds")
+            fn = send_tcp if protocol == "tcp" else send_udp
+            session_id = body.get("session_id")
+            if session_id:
+                result = app.extensions["remote_lab"].send_session(session_id, protocol, message, float(timeout))
+            else:
+                result = fn(host, port, message, float(timeout))
+            return jsonify({"ok": True, "result": result})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except (OSError, TimeoutError, socket.timeout) as exc:
+            return jsonify({"ok": False, "error": str(exc) or "remote transport failure"}), 504
+
+    @app.post("/api/remote/client/connect")
+    def remote_client_connect():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
+        try:
+            protocol = str(body.get("protocol", "")).lower()
+            if protocol not in ("tcp", "udp"):
+                raise ValueError("protocol must be tcp or udp")
+            host = _remote_host(body.get("host"))
+            port = _remote_port(body.get("port"), "port")
+            timeout = body.get("timeout", 3.0)
+            if not isinstance(timeout, (int, float)) or not 0.05 <= timeout <= MAX_TIMEOUT:
+                raise ValueError(f"timeout must be between 0.05 and {MAX_TIMEOUT} seconds")
+            return jsonify({"ok": True, "result": app.extensions["remote_lab"].connect(protocol, host, port, float(timeout))})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except (OSError, TimeoutError, socket.timeout) as exc:
+            return jsonify({"ok": False, "error": str(exc) or "remote connection failed"}), 504
 
     return app
 

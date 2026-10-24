@@ -24,4 +24,9 @@ export const api = {
   health: () => request('/api/health', { timeout: 5000 }),
   sendMessage: (payload) => request('/api/send', { method: 'POST', body: JSON.stringify(payload) }),
   compare: (payload) => request('/api/compare', { method: 'POST', body: JSON.stringify(payload) }),
+  remoteStatus: () => request('/api/remote/status'),
+  startRemoteServer: (payload) => request('/api/remote/server/start', { method: 'POST', body: JSON.stringify(payload) }),
+  stopRemoteServer: () => request('/api/remote/server/stop', { method: 'POST' }),
+  sendRemote: (payload) => request('/api/remote/client/send', { method: 'POST', body: JSON.stringify(payload), timeout: 10000 }),
+  connectRemote: (payload) => request('/api/remote/client/connect', { method: 'POST', body: JSON.stringify(payload), timeout: 10000 }),
 }

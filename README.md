@@ -100,6 +100,27 @@ transport result independently, so one timeout does not hide the other result.
 7. Use **Protocol explorer** to review connection, ordering, delivery, and
    retransmission differences.
 
+## Two-device Remote Device Lab
+
+The **Remote device lab** page is isolated from the local Message lab and
+Compare workflows. Run PacketLab on both devices connected to the same private
+LAN:
+
+1. On the server device, open the page, choose **Become server**, select TCP,
+   UDP, or both, and start the listener.
+2. Share the displayed private LAN IPv4 address with the other device.
+3. Allow TCP `9101` and UDP `9102` through the server device firewall.
+4. On the client device, open the same page, choose **Become client**, enter
+   the server IP, choose a protocol, and click **Connect / register**.
+5. TCP receives the server welcome immediately after connection. UDP sends a
+   registration datagram first and receives the server welcome response.
+6. Send additional messages over the established session.
+
+Both devices run their own Flask backend. The browser talks to its local
+backend over HTTP; the Python backend performs the actual cross-device TCP or
+UDP socket communication. The remote API accepts only private or loopback IPv4
+addresses, not arbitrary public destinations.
+
 ## Technical limitations
 
 Round-trip time is a local application measurement and includes TCP connection
