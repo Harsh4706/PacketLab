@@ -27,6 +27,9 @@ export const api = {
   remoteStatus: () => request('/api/remote/status'),
   startRemoteServer: (payload) => request('/api/remote/server/start', { method: 'POST', body: JSON.stringify(payload) }),
   stopRemoteServer: () => request('/api/remote/server/stop', { method: 'POST' }),
+  sendFromRemoteServer: (payload) => request('/api/remote/server/send', { method: 'POST', body: JSON.stringify(payload) }),
+  receiveRemote: (sessionId) => request(`/api/remote/client/receive?session_id=${encodeURIComponent(sessionId)}`),
   sendRemote: (payload) => request('/api/remote/client/send', { method: 'POST', body: JSON.stringify(payload), timeout: 10000 }),
   connectRemote: (payload) => request('/api/remote/client/connect', { method: 'POST', body: JSON.stringify(payload), timeout: 10000 }),
+  contactRemote: (payload) => request('/api/remote/client/contact', { method: 'POST', body: JSON.stringify(payload), timeout: 10000 }),
 }

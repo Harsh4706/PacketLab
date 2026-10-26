@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import socket
 import ipaddress
+import base64
 from typing import Any
 
 from flask import Flask, jsonify, request
@@ -12,7 +13,7 @@ from flask_cors import CORS
 from .socket_client import send_tcp, send_udp
 from .tcp_server import TCPServer
 from .udp_server import UDPServer
-from .remote_lab import RemoteLab
+from .remote_lab import MAX_UDP_TRANSFER_BYTES, RemoteLab
 
 MAX_MESSAGE_LENGTH = 4096
 MAX_TIMEOUT = 5.0
@@ -140,7 +141,22 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
             welcome = body.get("welcome", "Welcome to PacketLab")
             if not isinstance(welcome, str) or not welcome.strip() or len(welcome.encode("utf-8")) > MAX_MESSAGE_LENGTH:
                 raise ValueError("welcome must be a non-empty message up to 4096 bytes")
-            result = app.extensions["remote_lab"].start(protocols, tcp_port, udp_port, welcome)
+            hosted_message = body.get("hosted_message", "")
+            if not isinstance(hosted_message, str) or len(hosted_message.encode("utf-8")) > MAX_MESSAGE_LENGTH:
+                raise ValueError("hosted_message must be text up to 4096 bytes")
+            hosted_file = body.get("hosted_file")
+            if hosted_file is not None:
+                if not isinstance(hosted_file, dict) or not isinstance(hosted_file.get("name"), str) or not isinstance(hosted_file.get("content"), str):
+                    raise ValueError("hosted_file must contain a file name and base64 content")
+                try:
+                    decoded_file = base64.b64decode(hosted_file["content"], validate=True)
+                except (ValueError, TypeError):
+                    raise ValueError("hosted_file content must be valid base64")
+                if len(decoded_file) > MAX_UDP_TRANSFER_BYTES:
+                    raise ValueError(f"hosted_file must be at most {MAX_UDP_TRANSFER_BYTES} bytes")
+            if "udp" in protocols and not hosted_message.strip() and hosted_file is None:
+                raise ValueError("UDP server needs a hosted message or file")
+            result = app.extensions["remote_lab"].start(protocols, tcp_port, udp_port, welcome, hosted_message, hosted_file)
             return jsonify({"ok": True, **result})
         except (OSError, ValueError) as exc:
             return jsonify({"ok": False, "error": str(exc) or "unable to start remote server"}), 400
@@ -149,6 +165,38 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
     def remote_server_stop():
         app.extensions["remote_lab"].stop()
         return jsonify({"ok": True, **app.extensions["remote_lab"].status()})
+
+    @app.post("/api/remote/server/send")
+    def remote_server_send():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
+        protocol = str(body.get("protocol", "")).lower()
+        message = body.get("message")
+        if protocol != "tcp":
+            return jsonify({"ok": False, "error": "server chat is available for TCP only"}), 400
+        if not isinstance(message, str) or not message.strip():
+            return jsonify({"ok": False, "error": "message must be a non-empty string"}), 400
+        if len(message.encode("utf-8")) > MAX_MESSAGE_LENGTH:
+            return jsonify({"ok": False, "error": "message is too long"}), 400
+        try:
+            result = app.extensions["remote_lab"].send_from_server(protocol, message)
+            return jsonify({"ok": True, "result": result})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except OSError as exc:
+            return jsonify({"ok": False, "error": str(exc) or "unable to send server message"}), 504
+
+    @app.get("/api/remote/client/receive")
+    def remote_client_receive():
+        session_id = request.args.get("session_id", "")
+        if not session_id:
+            return jsonify({"ok": False, "error": "session_id is required"}), 400
+        try:
+            messages = app.extensions["remote_lab"].receive_session(session_id)
+            return jsonify({"ok": True, "messages": messages})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
 
     @app.post("/api/remote/client/send")
     def remote_client_send():
@@ -200,6 +248,23 @@ def create_app(config: dict[str, Any] | None = None) -> Flask:
             return jsonify({"ok": False, "error": str(exc)}), 400
         except (OSError, TimeoutError, socket.timeout) as exc:
             return jsonify({"ok": False, "error": str(exc) or "remote connection failed"}), 504
+
+    @app.post("/api/remote/client/contact")
+    def remote_client_contact():
+        body = request.get_json(silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"ok": False, "error": "request body must be a JSON object"}), 400
+        try:
+            host = _remote_host(body.get("host"))
+            port = _remote_port(body.get("port"), "port")
+            timeout = body.get("timeout", 3.0)
+            if not isinstance(timeout, (int, float)) or not 0.05 <= timeout <= MAX_TIMEOUT:
+                raise ValueError(f"timeout must be between 0.05 and {MAX_TIMEOUT} seconds")
+            return jsonify({"ok": True, "result": app.extensions["remote_lab"].contact_udp(host, port, float(timeout))})
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        except (OSError, TimeoutError, socket.timeout) as exc:
+            return jsonify({"ok": False, "error": str(exc) or "UDP contact failed"}), 504
 
     return app
 

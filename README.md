@@ -106,20 +106,31 @@ The **Remote device lab** page is isolated from the local Message lab and
 Compare workflows. Run PacketLab on both devices connected to the same private
 LAN:
 
-1. On the server device, open the page, choose **Become server**, select TCP,
-   UDP, or both, and start the listener.
+1. On the server device, open the page, choose **Become server**, select TCP
+   only or UDP only, and start the listener.
 2. Share the displayed private LAN IPv4 address with the other device.
 3. Allow TCP `9101` and UDP `9102` through the server device firewall.
 4. On the client device, open the same page, choose **Become client**, enter
-   the server IP, choose a protocol, and click **Connect / register**.
+   the server IP, choose TCP and click **Connect**, or choose UDP and click
+   **Contact**.
 5. TCP receives the server welcome immediately after connection. UDP sends a
    registration datagram first and receives the server welcome response.
 6. Send additional messages over the established session.
+7. For UDP, the server can host a message and optional small file. A client
+   contact sends one datagram and receives the hosted payload immediately;
+   no UDP session is created. Files are limited to 44,000 bytes so the JSON
+   response fits in one UDP datagram.
+8. For TCP, the server can send messages to the connected client at any time,
+   and both sides see the conversation history. TCP is the chat mode; UDP is
+   the one-shot transfer mode.
 
 Both devices run their own Flask backend. The browser talks to its local
 backend over HTTP; the Python backend performs the actual cross-device TCP or
-UDP socket communication. The remote API accepts only private or loopback IPv4
-addresses, not arbitrary public destinations.
+UDP socket communication. Remote TCP supports messages in both directions over
+the persistent socket, including after an idle period, while UDP remains a
+registered request-response flow.
+The remote API accepts only private or loopback IPv4 addresses, not arbitrary
+public destinations.
 
 ## Technical limitations
 
